@@ -1,0 +1,61 @@
+name: iOS sideload build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: false
+      - name: Cache Kotlin/Native
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ runner.arch }}-xcode-26.4.1-${{ hashFiles('gradle/libs.versions.toml') }}
+      - name: Build unsigned iOS app
+        run: |
+          xcodebuild -version
+          xcodebuild \
+            -project app/iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/Build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM= \
+            build
+      - name: Package IPA
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          ditto "$RUNNER_TEMP/Build/Build/Products/Debug-iphoneos/NativeCompilerReproducer.app" "$RUNNER_TEMP/ipa/Payload/NativeCompilerReproducer.app"
+          cd "$RUNNER_TEMP/ipa"
+          /usr/bin/zip -r -q "$GITHUB_WORKSPACE/debug-unsigned.ipa" Payload
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: debug-unsigned
+          path: debug-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
